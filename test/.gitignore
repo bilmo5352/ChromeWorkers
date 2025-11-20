@@ -1,0 +1,7 @@
+# Ignore test output files
+*.html
+*.jpg
+*.jpeg
+*.png
+result_*
+

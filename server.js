@@ -5,6 +5,11 @@ const cors = require('cors');
 const app = express();
 const PORT = process.env.PORT || 3000;
 
+// Proxy configuration from environment variables
+const PROXY_SERVER = process.env.PROXY_SERVER; // e.g., 'gate.decodo.com:10001'
+const PROXY_USERNAME = process.env.PROXY_USERNAME; // e.g., 'sphhexq8n5'
+const PROXY_PASSWORD = "yicf=8VrpMD384evBc"; // e.g., 'yicf=8VpMD3...'
+
 app.use(cors());
 app.use(express.json());
 
@@ -21,7 +26,7 @@ app.post('/render', async (req, res) => {
 
     try {
         // Launch browser in headed mode with args to improve stability in container
-        browser = await chromium.launch({
+        const launchOptions = {
             headless: false,
             args: [
                 '--no-sandbox',
@@ -30,7 +35,19 @@ app.post('/render', async (req, res) => {
                 '--disable-accelerated-2d-canvas',
                 '--disable-gpu'
             ]
-        });
+        };
+
+        // Add proxy configuration if environment variables are set
+        if (PROXY_SERVER && PROXY_USERNAME && PROXY_PASSWORD) {
+            launchOptions.proxy = {
+                server: `http://${PROXY_SERVER}`,
+                username: PROXY_USERNAME,
+                password: PROXY_PASSWORD
+            };
+            console.log(`Using proxy: ${PROXY_SERVER}`);
+        }
+
+        browser = await chromium.launch(launchOptions);
 
         const context = await browser.newContext({
              viewport: { width: 1280, height: 720 }

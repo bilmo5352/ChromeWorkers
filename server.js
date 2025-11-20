@@ -49,28 +49,8 @@ app.post('/render', async (req, res) => {
 
         browser = await chromium.launch(launchOptions);
 
-        // Create context with realistic browser fingerprint
         const context = await browser.newContext({
-            viewport: { width: 1920, height: 1080 },
-            userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
-            locale: 'en-US',
-            timezoneId: 'America/New_York',
-            permissions: ['geolocation'],
-            geolocation: { latitude: 40.7128, longitude: -74.0060 }, // New York coordinates
-            colorScheme: 'light',
-            deviceScaleFactor: 1,
-            isMobile: false,
-            hasTouch: false,
-            extraHTTPHeaders: {
-                'Accept-Language': 'en-US,en;q=0.9',
-                'Accept-Encoding': 'gzip, deflate, br',
-                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
-                'Sec-Fetch-Site': 'none',
-                'Sec-Fetch-Mode': 'navigate',
-                'Sec-Fetch-User': '?1',
-                'Sec-Fetch-Dest': 'document',
-                'Upgrade-Insecure-Requests': '1'
-            }
+             viewport: { width: 1280, height: 720 }
         });
 
         for (const targetUrl of targetUrls) {
@@ -78,67 +58,13 @@ app.post('/render', async (req, res) => {
             try {
                 page = await context.newPage();
                 
-                // Inject scripts to mask automation detection
-                await page.addInitScript(() => {
-                    // Overwrite the navigator.webdriver property
-                    Object.defineProperty(navigator, 'webdriver', {
-                        get: () => false
-                    });
-
-                    // Overwrite the chrome property
-                    window.chrome = {
-                        runtime: {}
-                    };
-
-                    // Overwrite permissions
-                    const originalQuery = window.navigator.permissions.query;
-                    window.navigator.permissions.query = (parameters) => (
-                        parameters.name === 'notifications' ?
-                            Promise.resolve({ state: Notification.permission }) :
-                            originalQuery(parameters)
-                    );
-
-                    // Add plugins
-                    Object.defineProperty(navigator, 'plugins', {
-                        get: () => [1, 2, 3, 4, 5]
-                    });
-
-                    // Add languages
-                    Object.defineProperty(navigator, 'languages', {
-                        get: () => ['en-US', 'en']
-                    });
-                });
-                
                 console.log(`Navigating to: ${targetUrl}`);
+                // Use 'domcontentloaded' which is more reliable than 'networkidle'
+                // Timeout of 60 seconds to handle heavy sites
+                await page.goto(targetUrl, { waitUntil: 'domcontentloaded', timeout: 60000 });
                 
-                // Random delay before navigation (simulate human thinking time)
-                await page.waitForTimeout(Math.random() * 1000 + 500);
-                
-                // Navigate to page
-                await page.goto(targetUrl, { 
-                    waitUntil: 'domcontentloaded', 
-                    timeout: 60000 
-                });
-                
-                // Simulate human-like behavior: random scrolling
-                await page.evaluate(async () => {
-                    const distance = Math.floor(Math.random() * 500) + 300;
-                    const delay = Math.floor(Math.random() * 100) + 50;
-                    
-                    for (let i = 0; i < distance; i += 10) {
-                        window.scrollBy(0, 10);
-                        await new Promise(resolve => setTimeout(resolve, delay));
-                    }
-                });
-                
-                // Random mouse movement
-                await page.mouse.move(
-                    Math.random() * 1920, 
-                    Math.random() * 1080
-                );
-                
-                // Wait for dynamic content with random delay (simulate reading time)
-                await page.waitForTimeout(Math.random() * 2000 + 2000);
+                // Wait an additional 2 seconds for dynamic content to load
+                await page.waitForTimeout(2000);
 
                 // Capture HTML
                 const html = await page.content();

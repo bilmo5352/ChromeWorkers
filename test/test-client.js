@@ -6,7 +6,7 @@ const API_URL = 'https://chromeworkers-production.up.railway.app/render';
 // const API_URL = 'http://localhost:3000/render'; // For local testing
 
 const TEST_URLS = [
-    'https://www.amazon.in/s?k=hoodies',
+    'https://www.walmart.com/search?q=bottles',
     'https://www.meesho.com/search?q=laptops',
     
     // Add more URLs to test

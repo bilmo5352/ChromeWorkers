@@ -231,6 +231,9 @@ app.post('/render', async (req, res) => {
                     // Wait for dynamic content
                     await page.waitForTimeout(randomDelay(1000, 2000));
 
+                    // Extra wait time to ensure page is fully loaded before scraping
+                    await page.waitForTimeout(randomDelay(5000, 8000));
+
                     // Capture HTML
                     const html = await page.content();
 

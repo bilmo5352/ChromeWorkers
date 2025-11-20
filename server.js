@@ -260,36 +260,71 @@ app.post('/render', async (req, res) => {
                     timeout: 60000 
                 });
                 
-                // Wait for page to stabilize
+                // Wait for page to fully load and stabilize
+                try {
+                    await page.waitForLoadState('networkidle', { timeout: 10000 });
+                } catch (e) {
+                    // Continue even if networkidle times out
+                }
                 await page.waitForTimeout(1000);
                 
                 // Simulate realistic mouse movements (multiple random movements)
-                for (let i = 0; i < 3; i++) {
-                    const x = Math.floor(Math.random() * 1920);
-                    const y = Math.floor(Math.random() * 1080);
-                    await page.mouse.move(x, y, { steps: 10 });
-                    await page.waitForTimeout(Math.random() * 500 + 200);
+                try {
+                    for (let i = 0; i < 3; i++) {
+                        const x = Math.floor(Math.random() * 1920);
+                        const y = Math.floor(Math.random() * 1080);
+                        await page.mouse.move(x, y, { steps: 10 });
+                        await page.waitForTimeout(Math.random() * 500 + 200);
+                    }
+                } catch (e) {
+                    console.log('Mouse movement interrupted:', e.message);
                 }
                 
-                // Simulate human-like scrolling with varying speeds
-                await page.evaluate(async () => {
-                    const scrolls = Math.floor(Math.random() * 3) + 2;
-                    for (let s = 0; s < scrolls; s++) {
-                        const distance = Math.floor(Math.random() * 400) + 200;
-                        const steps = Math.floor(Math.random() * 20) + 15;
-                        
-                        for (let i = 0; i < steps; i++) {
-                            window.scrollBy(0, distance / steps);
-                            await new Promise(resolve => setTimeout(resolve, Math.random() * 50 + 30));
+                // Simulate human-like scrolling with varying speeds (with navigation protection)
+                try {
+                    await page.evaluate(async () => {
+                        try {
+                            const scrolls = Math.floor(Math.random() * 3) + 2;
+                            for (let s = 0; s < scrolls; s++) {
+                                // Check if page is still valid
+                                if (document.readyState === 'uninitialized' || document.readyState === 'loading') {
+                                    await new Promise(resolve => setTimeout(resolve, 500));
+                                }
+                                
+                                const distance = Math.floor(Math.random() * 400) + 200;
+                                const steps = Math.floor(Math.random() * 20) + 15;
+                                
+                                for (let i = 0; i < steps; i++) {
+                                    if (document.readyState === 'complete' || document.readyState === 'interactive') {
+                                        window.scrollBy(0, distance / steps);
+                                        await new Promise(resolve => setTimeout(resolve, Math.random() * 50 + 30));
+                                    }
+                                }
+                                
+                                // Pause between scrolls (simulate reading)
+                                await new Promise(resolve => setTimeout(resolve, Math.random() * 1000 + 500));
+                            }
+                            
+                            // Scroll back up a bit (human behavior)
+                            if (document.readyState === 'complete' || document.readyState === 'interactive') {
+                                window.scrollBy(0, -100);
+                            }
+                        } catch (e) {
+                            // Silently handle navigation during scroll
                         }
-                        
-                        // Pause between scrolls (simulate reading)
-                        await new Promise(resolve => setTimeout(resolve, Math.random() * 1000 + 500));
+                    });
+                } catch (e) {
+                    // If page navigated during scroll, wait for new page to load
+                    if (e.message.includes('Execution context was destroyed') || e.message.includes('navigation')) {
+                        console.log('Page navigated during interaction, waiting for new page...');
+                        try {
+                            await page.waitForLoadState('domcontentloaded', { timeout: 10000 });
+                            await page.waitForTimeout(1000);
+                        } catch (navErr) {
+                            // Continue anyway - page might have already loaded
+                        }
                     }
-                    
-                    // Scroll back up a bit (human behavior)
-                    window.scrollBy(0, -100);
-                });
+                }
                 
                 // Random click somewhere safe (like empty space)
                 try {

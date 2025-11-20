@@ -42,8 +42,12 @@ app.post('/render', async (req, res) => {
                 page = await context.newPage();
                 
                 console.log(`Navigating to: ${targetUrl}`);
-                // Reasonable timeout of 30 seconds
-                await page.goto(targetUrl, { waitUntil: 'networkidle', timeout: 30000 });
+                // Use 'domcontentloaded' which is more reliable than 'networkidle'
+                // Timeout of 60 seconds to handle heavy sites
+                await page.goto(targetUrl, { waitUntil: 'domcontentloaded', timeout: 60000 });
+                
+                // Wait an additional 2 seconds for dynamic content to load
+                await page.waitForTimeout(2000);
 
                 // Capture HTML
                 const html = await page.content();
@@ -63,9 +67,21 @@ app.post('/render', async (req, res) => {
 
             } catch (err) {
                 console.error(`Error processing ${targetUrl}:`, err.message);
+                
+                // Provide more detailed error information
+                let errorType = 'unknown';
+                if (err.message.includes('Timeout')) {
+                    errorType = 'timeout';
+                } else if (err.message.includes('net::')) {
+                    errorType = 'network';
+                } else if (err.message.includes('blocked') || err.message.includes('403') || err.message.includes('captcha')) {
+                    errorType = 'blocked';
+                }
+                
                 results.push({
                     url: targetUrl,
                     status: 'error',
+                    errorType: errorType,
                     error: err.message
                 });
             } finally {

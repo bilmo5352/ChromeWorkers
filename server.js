@@ -25,16 +25,27 @@ app.post('/render', async (req, res) => {
     let browser = null;
 
     try {
-        // Launch browser in headed mode with args to improve stability in container
+        // Launch browser in headed mode with stealth args
         const launchOptions = {
             headless: false,
             args: [
                 '--no-sandbox',
                 '--disable-setuid-sandbox',
                 '--disable-dev-shm-usage',
-                '--disable-accelerated-2d-canvas',
-                '--disable-gpu'
-            ]
+                '--disable-blink-features=AutomationControlled',
+                '--disable-features=IsolateOrigins,site-per-process',
+                '--disable-site-isolation-trials',
+                '--disable-web-security',
+                '--disable-features=BlockInsecurePrivateNetworkRequests',
+                '--flag-switches-begin',
+                '--disable-background-timer-throttling',
+                '--disable-backgrounding-occluded-windows',
+                '--disable-renderer-backgrounding',
+                '--flag-switches-end',
+                '--window-size=1920,1080',
+                '--start-maximized'
+            ],
+            ignoreDefaultArgs: ['--enable-automation']
         };
 
         // Add proxy configuration if environment variables are set
@@ -78,19 +89,22 @@ app.post('/render', async (req, res) => {
             try {
                 page = await context.newPage();
                 
-                // Inject scripts to mask automation detection
+                // Comprehensive stealth script injection
                 await page.addInitScript(() => {
-                    // Overwrite the navigator.webdriver property
+                    // Pass the Webdriver Test
                     Object.defineProperty(navigator, 'webdriver', {
-                        get: () => false
+                        get: () => undefined
                     });
 
-                    // Overwrite the chrome property
+                    // Pass the Chrome Test
                     window.chrome = {
-                        runtime: {}
+                        runtime: {},
+                        loadTimes: function() {},
+                        csi: function() {},
+                        app: {}
                     };
 
-                    // Overwrite permissions
+                    // Pass the Permissions Test
                     const originalQuery = window.navigator.permissions.query;
                     window.navigator.permissions.query = (parameters) => (
                         parameters.name === 'notifications' ?
@@ -98,15 +112,141 @@ app.post('/render', async (req, res) => {
                             originalQuery(parameters)
                     );
 
-                    // Add plugins
+                    // Pass the Plugins Length Test
                     Object.defineProperty(navigator, 'plugins', {
-                        get: () => [1, 2, 3, 4, 5]
+                        get: () => [
+                            {
+                                0: {type: "application/x-google-chrome-pdf", suffixes: "pdf", description: "Portable Document Format", enabledPlugin: Plugin},
+                                description: "Portable Document Format",
+                                filename: "internal-pdf-viewer",
+                                length: 1,
+                                name: "Chrome PDF Plugin"
+                            },
+                            {
+                                0: {type: "application/pdf", suffixes: "pdf", description: "", enabledPlugin: Plugin},
+                                description: "",
+                                filename: "mhjfbmdgcfjbbpaeojofohoefgiehjai",
+                                length: 1,
+                                name: "Chrome PDF Viewer"
+                            },
+                            {
+                                0: {type: "application/x-nacl", suffixes: "", description: "Native Client Executable", enabledPlugin: Plugin},
+                                1: {type: "application/x-pnacl", suffixes: "", description: "Portable Native Client Executable", enabledPlugin: Plugin},
+                                description: "",
+                                filename: "internal-nacl-plugin",
+                                length: 2,
+                                name: "Native Client"
+                            }
+                        ]
                     });
 
-                    // Add languages
+                    // Pass the Languages Test
                     Object.defineProperty(navigator, 'languages', {
                         get: () => ['en-US', 'en']
                     });
+
+                    // Pass the iframe Test
+                    Object.defineProperty(HTMLIFrameElement.prototype, 'contentWindow', {
+                        get: function() {
+                            return window;
+                        }
+                    });
+
+                    // Pass toString test
+                    window.navigator.chrome = {
+                        runtime: {},
+                        loadTimes: function() {},
+                        csi: function() {},
+                        app: {}
+                    };
+
+                    // Overwrite the `plugins` property to use a custom getter.
+                    Object.defineProperty(navigator, 'plugins', {
+                        get: () => [1, 2, 3, 4, 5],
+                    });
+
+                    // Pass the Modernizr test
+                    window.Modernizr = {
+                        canvas: true,
+                        canvastext: true,
+                        webgl: true,
+                        touch: false,
+                        geolocation: true
+                    };
+
+                    // Pass the hairline detection
+                    Object.defineProperty(HTMLElement.prototype, 'offsetHeight', {
+                        get: function() {
+                            return 1;
+                        }
+                    });
+
+                    // Mock screen properties
+                    Object.defineProperty(screen, 'availWidth', { get: () => 1920 });
+                    Object.defineProperty(screen, 'availHeight', { get: () => 1080 });
+                    Object.defineProperty(screen, 'width', { get: () => 1920 });
+                    Object.defineProperty(screen, 'height', { get: () => 1080 });
+
+                    // Mock battery API
+                    Object.defineProperty(navigator, 'getBattery', {
+                        value: () => Promise.resolve({
+                            charging: true,
+                            chargingTime: 0,
+                            dischargingTime: Infinity,
+                            level: 1
+                        })
+                    });
+
+                    // Remove automation indicators
+                    delete navigator.__proto__.webdriver;
+
+                    // Mock connection
+                    Object.defineProperty(navigator, 'connection', {
+                        get: () => ({
+                            effectiveType: '4g',
+                            rtt: 50,
+                            downlink: 10,
+                            saveData: false
+                        })
+                    });
+
+                    // Mock hardware concurrency
+                    Object.defineProperty(navigator, 'hardwareConcurrency', {
+                        get: () => 8
+                    });
+
+                    // Mock device memory
+                    Object.defineProperty(navigator, 'deviceMemory', {
+                        get: () => 8
+                    });
+
+                    // Randomize canvas fingerprint
+                    const originalToDataURL = HTMLCanvasElement.prototype.toDataURL;
+                    HTMLCanvasElement.prototype.toDataURL = function(type) {
+                        const shift = Math.floor(Math.random() * 10) - 5;
+                        const canvas = this;
+                        const ctx = canvas.getContext('2d');
+                        if (ctx) {
+                            const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+                            for (let i = 0; i < imageData.data.length; i += 4) {
+                                imageData.data[i] = imageData.data[i] + shift;
+                            }
+                            ctx.putImageData(imageData, 0, 0);
+                        }
+                        return originalToDataURL.apply(this, [type]);
+                    };
+
+                    // Mock WebGL vendor
+                    const getParameter = WebGLRenderingContext.prototype.getParameter;
+                    WebGLRenderingContext.prototype.getParameter = function(parameter) {
+                        if (parameter === 37445) {
+                            return 'Intel Inc.';
+                        }
+                        if (parameter === 37446) {
+                            return 'Intel Iris OpenGL Engine';
+                        }
+                        return getParameter.apply(this, [parameter]);
+                    };
                 });
                 
                 console.log(`Navigating to: ${targetUrl}`);
@@ -120,22 +260,43 @@ app.post('/render', async (req, res) => {
                     timeout: 60000 
                 });
                 
-                // Simulate human-like behavior: random scrolling
+                // Wait for page to stabilize
+                await page.waitForTimeout(1000);
+                
+                // Simulate realistic mouse movements (multiple random movements)
+                for (let i = 0; i < 3; i++) {
+                    const x = Math.floor(Math.random() * 1920);
+                    const y = Math.floor(Math.random() * 1080);
+                    await page.mouse.move(x, y, { steps: 10 });
+                    await page.waitForTimeout(Math.random() * 500 + 200);
+                }
+                
+                // Simulate human-like scrolling with varying speeds
                 await page.evaluate(async () => {
-                    const distance = Math.floor(Math.random() * 500) + 300;
-                    const delay = Math.floor(Math.random() * 100) + 50;
-                    
-                    for (let i = 0; i < distance; i += 10) {
-                        window.scrollBy(0, 10);
-                        await new Promise(resolve => setTimeout(resolve, delay));
+                    const scrolls = Math.floor(Math.random() * 3) + 2;
+                    for (let s = 0; s < scrolls; s++) {
+                        const distance = Math.floor(Math.random() * 400) + 200;
+                        const steps = Math.floor(Math.random() * 20) + 15;
+                        
+                        for (let i = 0; i < steps; i++) {
+                            window.scrollBy(0, distance / steps);
+                            await new Promise(resolve => setTimeout(resolve, Math.random() * 50 + 30));
+                        }
+                        
+                        // Pause between scrolls (simulate reading)
+                        await new Promise(resolve => setTimeout(resolve, Math.random() * 1000 + 500));
                     }
+                    
+                    // Scroll back up a bit (human behavior)
+                    window.scrollBy(0, -100);
                 });
                 
-                // Random mouse movement
-                await page.mouse.move(
-                    Math.random() * 1920, 
-                    Math.random() * 1080
-                );
+                // Random click somewhere safe (like empty space)
+                try {
+                    await page.mouse.click(Math.random() * 200 + 100, Math.random() * 200 + 100);
+                } catch (e) {
+                    // Ignore click errors
+                }
                 
                 // Wait for dynamic content with random delay (simulate reading time)
                 await page.waitForTimeout(Math.random() * 2000 + 2000);

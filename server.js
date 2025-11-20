@@ -25,27 +25,16 @@ app.post('/render', async (req, res) => {
     let browser = null;
 
     try {
-        // Launch browser in headed mode with stealth args
+        // Launch browser in headed mode with args to improve stability in container
         const launchOptions = {
             headless: false,
             args: [
                 '--no-sandbox',
                 '--disable-setuid-sandbox',
                 '--disable-dev-shm-usage',
-                '--disable-blink-features=AutomationControlled',
-                '--disable-features=IsolateOrigins,site-per-process',
-                '--disable-site-isolation-trials',
-                '--disable-web-security',
-                '--disable-features=BlockInsecurePrivateNetworkRequests',
-                '--flag-switches-begin',
-                '--disable-background-timer-throttling',
-                '--disable-backgrounding-occluded-windows',
-                '--disable-renderer-backgrounding',
-                '--flag-switches-end',
-                '--window-size=1920,1080',
-                '--start-maximized'
-            ],
-            ignoreDefaultArgs: ['--enable-automation']
+                '--disable-accelerated-2d-canvas',
+                '--disable-gpu'
+            ]
         };
 
         // Add proxy configuration if environment variables are set
@@ -55,12 +44,7 @@ app.post('/render', async (req, res) => {
                 username: PROXY_USERNAME,
                 password: PROXY_PASSWORD
             };
-            console.log(`Using proxy: ${PROXY_SERVER} with user: ${PROXY_USERNAME}`);
-        } else {
-            console.log('WARNING: No proxy configured! Sites may block direct connections.');
-            console.log(`PROXY_SERVER: ${PROXY_SERVER || 'NOT SET'}`);
-            console.log(`PROXY_USERNAME: ${PROXY_USERNAME || 'NOT SET'}`);
-            console.log(`PROXY_PASSWORD: ${PROXY_PASSWORD ? 'SET' : 'NOT SET'}`);
+            console.log(`Using proxy: ${PROXY_SERVER}`);
         }
 
         browser = await chromium.launch(launchOptions);
@@ -94,22 +78,19 @@ app.post('/render', async (req, res) => {
             try {
                 page = await context.newPage();
                 
-                // Comprehensive stealth script injection
+                // Inject scripts to mask automation detection
                 await page.addInitScript(() => {
-                    // Pass the Webdriver Test
+                    // Overwrite the navigator.webdriver property
                     Object.defineProperty(navigator, 'webdriver', {
-                        get: () => undefined
+                        get: () => false
                     });
 
-                    // Pass the Chrome Test
+                    // Overwrite the chrome property
                     window.chrome = {
-                        runtime: {},
-                        loadTimes: function() {},
-                        csi: function() {},
-                        app: {}
+                        runtime: {}
                     };
 
-                    // Pass the Permissions Test
+                    // Overwrite permissions
                     const originalQuery = window.navigator.permissions.query;
                     window.navigator.permissions.query = (parameters) => (
                         parameters.name === 'notifications' ?
@@ -117,141 +98,15 @@ app.post('/render', async (req, res) => {
                             originalQuery(parameters)
                     );
 
-                    // Pass the Plugins Length Test
+                    // Add plugins
                     Object.defineProperty(navigator, 'plugins', {
-                        get: () => [
-                            {
-                                0: {type: "application/x-google-chrome-pdf", suffixes: "pdf", description: "Portable Document Format", enabledPlugin: Plugin},
-                                description: "Portable Document Format",
-                                filename: "internal-pdf-viewer",
-                                length: 1,
-                                name: "Chrome PDF Plugin"
-                            },
-                            {
-                                0: {type: "application/pdf", suffixes: "pdf", description: "", enabledPlugin: Plugin},
-                                description: "",
-                                filename: "mhjfbmdgcfjbbpaeojofohoefgiehjai",
-                                length: 1,
-                                name: "Chrome PDF Viewer"
-                            },
-                            {
-                                0: {type: "application/x-nacl", suffixes: "", description: "Native Client Executable", enabledPlugin: Plugin},
-                                1: {type: "application/x-pnacl", suffixes: "", description: "Portable Native Client Executable", enabledPlugin: Plugin},
-                                description: "",
-                                filename: "internal-nacl-plugin",
-                                length: 2,
-                                name: "Native Client"
-                            }
-                        ]
+                        get: () => [1, 2, 3, 4, 5]
                     });
 
-                    // Pass the Languages Test
+                    // Add languages
                     Object.defineProperty(navigator, 'languages', {
                         get: () => ['en-US', 'en']
                     });
-
-                    // Pass the iframe Test
-                    Object.defineProperty(HTMLIFrameElement.prototype, 'contentWindow', {
-                        get: function() {
-                            return window;
-                        }
-                    });
-
-                    // Pass toString test
-                    window.navigator.chrome = {
-                        runtime: {},
-                        loadTimes: function() {},
-                        csi: function() {},
-                        app: {}
-                    };
-
-                    // Overwrite the `plugins` property to use a custom getter.
-                    Object.defineProperty(navigator, 'plugins', {
-                        get: () => [1, 2, 3, 4, 5],
-                    });
-
-                    // Pass the Modernizr test
-                    window.Modernizr = {
-                        canvas: true,
-                        canvastext: true,
-                        webgl: true,
-                        touch: false,
-                        geolocation: true
-                    };
-
-                    // Pass the hairline detection
-                    Object.defineProperty(HTMLElement.prototype, 'offsetHeight', {
-                        get: function() {
-                            return 1;
-                        }
-                    });
-
-                    // Mock screen properties
-                    Object.defineProperty(screen, 'availWidth', { get: () => 1920 });
-                    Object.defineProperty(screen, 'availHeight', { get: () => 1080 });
-                    Object.defineProperty(screen, 'width', { get: () => 1920 });
-                    Object.defineProperty(screen, 'height', { get: () => 1080 });
-
-                    // Mock battery API
-                    Object.defineProperty(navigator, 'getBattery', {
-                        value: () => Promise.resolve({
-                            charging: true,
-                            chargingTime: 0,
-                            dischargingTime: Infinity,
-                            level: 1
-                        })
-                    });
-
-                    // Remove automation indicators
-                    delete navigator.__proto__.webdriver;
-
-                    // Mock connection
-                    Object.defineProperty(navigator, 'connection', {
-                        get: () => ({
-                            effectiveType: '4g',
-                            rtt: 50,
-                            downlink: 10,
-                            saveData: false
-                        })
-                    });
-
-                    // Mock hardware concurrency
-                    Object.defineProperty(navigator, 'hardwareConcurrency', {
-                        get: () => 8
-                    });
-
-                    // Mock device memory
-                    Object.defineProperty(navigator, 'deviceMemory', {
-                        get: () => 8
-                    });
-
-                    // Randomize canvas fingerprint
-                    const originalToDataURL = HTMLCanvasElement.prototype.toDataURL;
-                    HTMLCanvasElement.prototype.toDataURL = function(type) {
-                        const shift = Math.floor(Math.random() * 10) - 5;
-                        const canvas = this;
-                        const ctx = canvas.getContext('2d');
-                        if (ctx) {
-                            const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-                            for (let i = 0; i < imageData.data.length; i += 4) {
-                                imageData.data[i] = imageData.data[i] + shift;
-                            }
-                            ctx.putImageData(imageData, 0, 0);
-                        }
-                        return originalToDataURL.apply(this, [type]);
-                    };
-
-                    // Mock WebGL vendor
-                    const getParameter = WebGLRenderingContext.prototype.getParameter;
-                    WebGLRenderingContext.prototype.getParameter = function(parameter) {
-                        if (parameter === 37445) {
-                            return 'Intel Inc.';
-                        }
-                        if (parameter === 37446) {
-                            return 'Intel Iris OpenGL Engine';
-                        }
-                        return getParameter.apply(this, [parameter]);
-                    };
                 });
                 
                 console.log(`Navigating to: ${targetUrl}`);
@@ -259,171 +114,46 @@ app.post('/render', async (req, res) => {
                 // Random delay before navigation (simulate human thinking time)
                 await page.waitForTimeout(Math.random() * 1000 + 500);
                 
-                // Navigate to page - handle non-2xx responses gracefully
-                let navigationError = null;
-                let responseStatus = null;
-                try {
-                    const response = await page.goto(targetUrl, { 
-                        waitUntil: 'domcontentloaded', 
-                        timeout: 60000 
-                    });
+                // Navigate to page
+                await page.goto(targetUrl, { 
+                    waitUntil: 'domcontentloaded', 
+                    timeout: 60000 
+                });
+                
+                // Simulate human-like behavior: random scrolling
+                await page.evaluate(async () => {
+                    const distance = Math.floor(Math.random() * 500) + 300;
+                    const delay = Math.floor(Math.random() * 100) + 50;
                     
-                    // Log response status for debugging
-                    if (response) {
-                        responseStatus = response.status();
-                        console.log(`Response status: ${responseStatus} for ${targetUrl}`);
-                        
-                        // Even if status is not 200, we still want to capture content
-                        // Some sites return 403/503 but still show content
-                        if (responseStatus >= 400) {
-                            console.log(`Warning: Non-2xx status code (${responseStatus}) but continuing...`);
-                        }
+                    for (let i = 0; i < distance; i += 10) {
+                        window.scrollBy(0, 10);
+                        await new Promise(resolve => setTimeout(resolve, delay));
                     }
-                } catch (err) {
-                    // If navigation fails, try to continue anyway - page might have loaded
-                    navigationError = err;
-                    console.log(`Navigation error (but continuing): ${err.message}`);
-                    
-                    // Try to get response status from error if available
-                    if (err.message.includes('ERR_HTTP_RESPONSE_CODE_FAILURE')) {
-                        // Extract status code if possible
-                        const statusMatch = err.message.match(/(\d{3})/);
-                        if (statusMatch) {
-                            responseStatus = parseInt(statusMatch[1]);
-                            console.log(`Detected HTTP status: ${responseStatus}`);
-                        }
-                    }
-                    
-                    // Wait a bit to see if page loaded anyway
-                    try {
-                        await page.waitForTimeout(2000);
-                        // Check if we can access the page
-                        const currentUrl = page.url();
-                        if (currentUrl && currentUrl !== 'about:blank') {
-                            console.log(`Page loaded despite error, current URL: ${currentUrl}`);
-                        } else {
-                            // Page didn't load at all
-                            throw new Error(`Page navigation completely failed: ${err.message}`);
-                        }
-                    } catch (e) {
-                        // If page didn't load, re-throw the original navigation error
-                        throw new Error(`Page did not load: ${err.message}`);
-                    }
-                }
+                });
                 
-                // Wait for page to fully load and stabilize
-                try {
-                    await page.waitForLoadState('networkidle', { timeout: 10000 });
-                } catch (e) {
-                    // Continue even if networkidle times out
-                }
-                await page.waitForTimeout(1000);
-                
-                // Simulate realistic mouse movements (multiple random movements)
-                try {
-                    for (let i = 0; i < 3; i++) {
-                        const x = Math.floor(Math.random() * 1920);
-                        const y = Math.floor(Math.random() * 1080);
-                        await page.mouse.move(x, y, { steps: 10 });
-                        await page.waitForTimeout(Math.random() * 500 + 200);
-                    }
-                } catch (e) {
-                    console.log('Mouse movement interrupted:', e.message);
-                }
-                
-                // Simulate human-like scrolling with varying speeds (with navigation protection)
-                try {
-                    await page.evaluate(async () => {
-                        try {
-                            const scrolls = Math.floor(Math.random() * 3) + 2;
-                            for (let s = 0; s < scrolls; s++) {
-                                // Check if page is still valid
-                                if (document.readyState === 'uninitialized' || document.readyState === 'loading') {
-                                    await new Promise(resolve => setTimeout(resolve, 500));
-                                }
-                                
-                                const distance = Math.floor(Math.random() * 400) + 200;
-                                const steps = Math.floor(Math.random() * 20) + 15;
-                                
-                                for (let i = 0; i < steps; i++) {
-                                    if (document.readyState === 'complete' || document.readyState === 'interactive') {
-                                        window.scrollBy(0, distance / steps);
-                                        await new Promise(resolve => setTimeout(resolve, Math.random() * 50 + 30));
-                                    }
-                                }
-                                
-                                // Pause between scrolls (simulate reading)
-                                await new Promise(resolve => setTimeout(resolve, Math.random() * 1000 + 500));
-                            }
-                            
-                            // Scroll back up a bit (human behavior)
-                            if (document.readyState === 'complete' || document.readyState === 'interactive') {
-                                window.scrollBy(0, -100);
-                            }
-                        } catch (e) {
-                            // Silently handle navigation during scroll
-                        }
-                    });
-                } catch (e) {
-                    // If page navigated during scroll, wait for new page to load
-                    if (e.message.includes('Execution context was destroyed') || e.message.includes('navigation')) {
-                        console.log('Page navigated during interaction, waiting for new page...');
-                        try {
-                            await page.waitForLoadState('domcontentloaded', { timeout: 10000 });
-                            await page.waitForTimeout(1000);
-                        } catch (navErr) {
-                            // Continue anyway - page might have already loaded
-                        }
-                    }
-                }
-                
-                // Random click somewhere safe (like empty space)
-                try {
-                    await page.mouse.click(Math.random() * 200 + 100, Math.random() * 200 + 100);
-                } catch (e) {
-                    // Ignore click errors
-                }
+                // Random mouse movement
+                await page.mouse.move(
+                    Math.random() * 1920, 
+                    Math.random() * 1080
+                );
                 
                 // Wait for dynamic content with random delay (simulate reading time)
                 await page.waitForTimeout(Math.random() * 2000 + 2000);
 
-                // Check if page actually loaded before capturing
-                const currentUrl = page.url();
-                if (!currentUrl || currentUrl === 'about:blank') {
-                    throw new Error('Page did not load - navigation failed completely');
-                }
-
                 // Capture HTML
-                let html;
-                let screenshotBase64;
-                try {
-                    html = await page.content();
-                    
-                    // Check if we got actual content (not just error page)
-                    if (!html || html.length < 100) {
-                        throw new Error('Page content is empty or too short');
-                    }
+                const html = await page.content();
 
-                    // Capture Screenshot
-                    // fullPage: true captures the whole scrollable page. 
-                    // If you only want the viewport, set fullPage: false.
-                    const screenshotBuffer = await page.screenshot({ fullPage: true, type: 'jpeg', quality: 80 });
-                    screenshotBase64 = screenshotBuffer.toString('base64');
-                } catch (captureErr) {
-                    // If navigation had an error, throw that instead
-                    if (navigationError) {
-                        throw navigationError;
-                    }
-                    throw captureErr;
-                }
+                // Capture Screenshot
+                // fullPage: true captures the whole scrollable page. 
+                // If you only want the viewport, set fullPage: false.
+                const screenshotBuffer = await page.screenshot({ fullPage: true, type: 'jpeg', quality: 80 });
+                const screenshotBase64 = screenshotBuffer.toString('base64');
 
                 results.push({
                     url: targetUrl,
                     status: 'success',
                     html: html,
-                    screenshot: `data:image/jpeg;base64,${screenshotBase64}`,
-                    httpStatus: responseStatus || (navigationError ? 'unknown' : 200),
-                    note: navigationError ? 'Navigation had error but content captured' : 'ok'
+                    screenshot: `data:image/jpeg;base64,${screenshotBase64}`
                 });
 
             } catch (err) {

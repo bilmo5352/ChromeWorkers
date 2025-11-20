@@ -55,7 +55,12 @@ app.post('/render', async (req, res) => {
                 username: PROXY_USERNAME,
                 password: PROXY_PASSWORD
             };
-            console.log(`Using proxy: ${PROXY_SERVER}`);
+            console.log(`Using proxy: ${PROXY_SERVER} with user: ${PROXY_USERNAME}`);
+        } else {
+            console.log('WARNING: No proxy configured! Sites may block direct connections.');
+            console.log(`PROXY_SERVER: ${PROXY_SERVER || 'NOT SET'}`);
+            console.log(`PROXY_USERNAME: ${PROXY_USERNAME || 'NOT SET'}`);
+            console.log(`PROXY_PASSWORD: ${PROXY_PASSWORD ? 'SET' : 'NOT SET'}`);
         }
 
         browser = await chromium.launch(launchOptions);
@@ -254,11 +259,57 @@ app.post('/render', async (req, res) => {
                 // Random delay before navigation (simulate human thinking time)
                 await page.waitForTimeout(Math.random() * 1000 + 500);
                 
-                // Navigate to page
-                await page.goto(targetUrl, { 
-                    waitUntil: 'domcontentloaded', 
-                    timeout: 60000 
-                });
+                // Navigate to page - handle non-2xx responses gracefully
+                let navigationError = null;
+                let responseStatus = null;
+                try {
+                    const response = await page.goto(targetUrl, { 
+                        waitUntil: 'domcontentloaded', 
+                        timeout: 60000 
+                    });
+                    
+                    // Log response status for debugging
+                    if (response) {
+                        responseStatus = response.status();
+                        console.log(`Response status: ${responseStatus} for ${targetUrl}`);
+                        
+                        // Even if status is not 200, we still want to capture content
+                        // Some sites return 403/503 but still show content
+                        if (responseStatus >= 400) {
+                            console.log(`Warning: Non-2xx status code (${responseStatus}) but continuing...`);
+                        }
+                    }
+                } catch (err) {
+                    // If navigation fails, try to continue anyway - page might have loaded
+                    navigationError = err;
+                    console.log(`Navigation error (but continuing): ${err.message}`);
+                    
+                    // Try to get response status from error if available
+                    if (err.message.includes('ERR_HTTP_RESPONSE_CODE_FAILURE')) {
+                        // Extract status code if possible
+                        const statusMatch = err.message.match(/(\d{3})/);
+                        if (statusMatch) {
+                            responseStatus = parseInt(statusMatch[1]);
+                            console.log(`Detected HTTP status: ${responseStatus}`);
+                        }
+                    }
+                    
+                    // Wait a bit to see if page loaded anyway
+                    try {
+                        await page.waitForTimeout(2000);
+                        // Check if we can access the page
+                        const currentUrl = page.url();
+                        if (currentUrl && currentUrl !== 'about:blank') {
+                            console.log(`Page loaded despite error, current URL: ${currentUrl}`);
+                        } else {
+                            // Page didn't load at all
+                            throw new Error(`Page navigation completely failed: ${err.message}`);
+                        }
+                    } catch (e) {
+                        // If page didn't load, re-throw the original navigation error
+                        throw new Error(`Page did not load: ${err.message}`);
+                    }
+                }
                 
                 // Wait for page to fully load and stabilize
                 try {
@@ -336,20 +387,43 @@ app.post('/render', async (req, res) => {
                 // Wait for dynamic content with random delay (simulate reading time)
                 await page.waitForTimeout(Math.random() * 2000 + 2000);
 
-                // Capture HTML
-                const html = await page.content();
+                // Check if page actually loaded before capturing
+                const currentUrl = page.url();
+                if (!currentUrl || currentUrl === 'about:blank') {
+                    throw new Error('Page did not load - navigation failed completely');
+                }
 
-                // Capture Screenshot
-                // fullPage: true captures the whole scrollable page. 
-                // If you only want the viewport, set fullPage: false.
-                const screenshotBuffer = await page.screenshot({ fullPage: true, type: 'jpeg', quality: 80 });
-                const screenshotBase64 = screenshotBuffer.toString('base64');
+                // Capture HTML
+                let html;
+                let screenshotBase64;
+                try {
+                    html = await page.content();
+                    
+                    // Check if we got actual content (not just error page)
+                    if (!html || html.length < 100) {
+                        throw new Error('Page content is empty or too short');
+                    }
+
+                    // Capture Screenshot
+                    // fullPage: true captures the whole scrollable page. 
+                    // If you only want the viewport, set fullPage: false.
+                    const screenshotBuffer = await page.screenshot({ fullPage: true, type: 'jpeg', quality: 80 });
+                    screenshotBase64 = screenshotBuffer.toString('base64');
+                } catch (captureErr) {
+                    // If navigation had an error, throw that instead
+                    if (navigationError) {
+                        throw navigationError;
+                    }
+                    throw captureErr;
+                }
 
                 results.push({
                     url: targetUrl,
                     status: 'success',
                     html: html,
-                    screenshot: `data:image/jpeg;base64,${screenshotBase64}`
+                    screenshot: `data:image/jpeg;base64,${screenshotBase64}`,
+                    httpStatus: responseStatus || (navigationError ? 'unknown' : 200),
+                    note: navigationError ? 'Navigation had error but content captured' : 'ok'
                 });
 
             } catch (err) {

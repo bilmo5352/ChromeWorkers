@@ -154,21 +154,45 @@ app.post('/render', async (req, res) => {
                     context = await browser.newContext(contextOptions);
                     page = await context.newPage();
 
-                    // Inject anti-detection scripts before navigation
+                    // Inject comprehensive anti-detection scripts before navigation
                     await page.addInitScript(() => {
                         // Hide webdriver property
                         Object.defineProperty(navigator, 'webdriver', {
                             get: () => false,
                         });
 
-                        // Override plugins
+                        // Override automation property
+                        delete navigator.__proto__.webdriver;
+
+                        // Override plugins with realistic data
                         Object.defineProperty(navigator, 'plugins', {
-                            get: () => [1, 2, 3, 4, 5],
+                            get: () => {
+                                return [
+                                    { name: 'Chrome PDF Plugin', filename: 'internal-pdf-viewer', description: 'Portable Document Format' },
+                                    { name: 'Chrome PDF Viewer', filename: 'mhjfbmdgcfjbbpaeojofohoefgiehjai', description: '' },
+                                    { name: 'Native Client', filename: 'internal-nacl-plugin', description: '' }
+                                ];
+                            },
                         });
 
                         // Override languages
                         Object.defineProperty(navigator, 'languages', {
                             get: () => ['en-US', 'en'],
+                        });
+
+                        // Override platform
+                        Object.defineProperty(navigator, 'platform', {
+                            get: () => 'Win32',
+                        });
+
+                        // Override hardwareConcurrency
+                        Object.defineProperty(navigator, 'hardwareConcurrency', {
+                            get: () => 8,
+                        });
+
+                        // Override deviceMemory
+                        Object.defineProperty(navigator, 'deviceMemory', {
+                            get: () => 8,
                         });
 
                         // Override permissions
@@ -179,12 +203,15 @@ app.post('/render', async (req, res) => {
                                 originalQuery(parameters)
                         );
 
-                        // Mock chrome object
+                        // Mock chrome object with more properties
                         window.chrome = {
                             runtime: {},
+                            loadTimes: function() {},
+                            csi: function() {},
+                            app: {}
                         };
 
-                        // Override getParameter to always return default
+                        // Override getParameter to return realistic GPU info
                         const getParameter = WebGLRenderingContext.prototype.getParameter;
                         WebGLRenderingContext.prototype.getParameter = function(parameter) {
                             if (parameter === 37445) {
@@ -195,44 +222,106 @@ app.post('/render', async (req, res) => {
                             }
                             return getParameter.call(this, parameter);
                         };
+
+                        // Override battery API
+                        Object.defineProperty(navigator, 'getBattery', {
+                            get: () => undefined
+                        });
+
+                        // Mask automation in console
+                        window.console.debug = () => {};
+
+                        // Override toString methods to hide proxy
+                        const originalToString = Function.prototype.toString;
+                        Function.prototype.toString = function() {
+                            if (this === navigator.webdriver) {
+                                return 'function webdriver() { [native code] }';
+                            }
+                            return originalToString.call(this);
+                        };
+
+                        // Randomize canvas fingerprint slightly
+                        const originalGetContext = HTMLCanvasElement.prototype.getContext;
+                        HTMLCanvasElement.prototype.getContext = function(type, ...args) {
+                            const context = originalGetContext.call(this, type, ...args);
+                            if (type === '2d' || type === 'webgl' || type === 'webgl2') {
+                                // Add slight noise to canvas operations
+                                if (context && context.fillText) {
+                                    const originalFillText = context.fillText;
+                                    context.fillText = function(...args) {
+                                        return originalFillText.apply(this, args);
+                                    };
+                                }
+                            }
+                            return context;
+                        };
                     });
 
-                    console.log(`Navigating to: ${targetUrl}`);
+                    // Extract domain to visit homepage first
+                    const urlObj = new URL(targetUrl);
+                    const homepage = `${urlObj.protocol}//${urlObj.hostname}`;
                     
-                    // Navigate with realistic referrer
+                    // Visit homepage first (more realistic behavior)
+                    console.log(`First visiting homepage: ${homepage}`);
+                    try {
+                        await page.goto(homepage, { 
+                            waitUntil: 'domcontentloaded', 
+                            timeout: 30000,
+                            referer: 'https://www.google.com/'
+                        });
+                        
+                        // Brief interaction on homepage
+                        await page.waitForTimeout(randomDelay(2000, 4000));
+                        
+                        // Scroll a bit on homepage
+                        await page.evaluate(() => {
+                            window.scrollBy(0, Math.random() * 200 + 100);
+                        });
+                        await page.waitForTimeout(randomDelay(1000, 2000));
+                    } catch (homeErr) {
+                        console.log(`Homepage visit failed (continuing anyway): ${homeErr.message}`);
+                    }
+                    
+                    console.log(`Now navigating to: ${targetUrl}`);
+                    
+                    // Navigate to actual target URL
                     await page.goto(targetUrl, { 
                         waitUntil: 'domcontentloaded', 
                         timeout: 60000,
-                        referer: 'https://www.google.com/'
+                        referer: homepage
                     });
                     
                     // Random delay before interaction (mimic human reading)
-                    await page.waitForTimeout(randomDelay(1500, 3000));
+                    await page.waitForTimeout(randomDelay(2000, 4000));
 
                     // Simulate human-like mouse movement
                     await page.mouse.move(randomDelay(100, 500), randomDelay(100, 500));
-                    await page.waitForTimeout(randomDelay(200, 500));
+                    await page.waitForTimeout(randomDelay(500, 1000));
+                    
+                    // Move mouse again (more realistic)
+                    await page.mouse.move(randomDelay(200, 700), randomDelay(200, 700));
+                    await page.waitForTimeout(randomDelay(300, 700));
 
-                    // Simulate scrolling (human behavior)
-                    const scrollSteps = randomDelay(2, 5);
+                    // Simulate scrolling (human behavior) - slower and more deliberate
+                    const scrollSteps = randomDelay(3, 6);
                     for (let i = 0; i < scrollSteps; i++) {
                         await page.evaluate(() => {
-                            window.scrollBy(0, Math.random() * 300 + 100);
+                            window.scrollBy(0, Math.random() * 400 + 200);
                         });
-                        await page.waitForTimeout(randomDelay(300, 800));
+                        await page.waitForTimeout(randomDelay(800, 1500));
                     }
 
                     // Scroll back up a bit (common human behavior)
                     await page.evaluate(() => {
-                        window.scrollBy(0, -(Math.random() * 200 + 50));
+                        window.scrollBy(0, -(Math.random() * 300 + 100));
                     });
-                    await page.waitForTimeout(randomDelay(500, 1000));
-
-                    // Wait for dynamic content
                     await page.waitForTimeout(randomDelay(1000, 2000));
 
+                    // Wait for dynamic content to load
+                    await page.waitForTimeout(randomDelay(2000, 3000));
+
                     // Extra wait time to ensure page is fully loaded before scraping
-                    await page.waitForTimeout(randomDelay(5000, 8000));
+                    await page.waitForTimeout(randomDelay(6000, 10000));
 
                     // Capture HTML
                     const html = await page.content();

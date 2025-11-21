@@ -31,13 +31,14 @@ const VIEWPORTS = [
 ];
 
 let proxyIndex = 0;
+const proxyIndexLock = { value: 0 }; // For thread-safe proxy rotation
 
-// Get next proxy in rotation
+// Get next proxy in rotation (thread-safe)
 function getNextProxy() {
     if (PROXY_SERVERS.length === 0) return null;
-    const proxy = PROXY_SERVERS[proxyIndex % PROXY_SERVERS.length];
-    proxyIndex++;
-    return proxy;
+    const currentIndex = proxyIndexLock.value;
+    proxyIndexLock.value = (currentIndex + 1) % PROXY_SERVERS.length;
+    return PROXY_SERVERS[currentIndex % PROXY_SERVERS.length];
 }
 
 // Get random user agent
@@ -58,6 +59,366 @@ function randomDelay(min, max) {
 app.use(cors());
 app.use(express.json());
 
+// Process a single URL (extracted for parallel processing)
+async function processUrl(browser, targetUrl) {
+    const urlObj = new URL(targetUrl);
+    const domain = urlObj.hostname;
+    
+    let context = null;
+    let page = null;
+    let success = false;
+    let lastError = null;
+    
+    // Get starting proxy index for this URL (thread-safe)
+    const startProxyIndex = proxyIndexLock.value;
+    if (PROXY_SERVERS.length > 0) {
+        proxyIndexLock.value = (proxyIndexLock.value + 1) % PROXY_SERVERS.length;
+    }
+    
+    // Try with proxy first, then fallback to no proxy if all proxies fail
+    const maxRetries = PROXY_SERVERS.length > 0 ? PROXY_SERVERS.length + 1 : 1; // +1 for no-proxy fallback
+    
+    for (let attempt = 0; attempt < maxRetries && !success; attempt++) {
+        let detectedIP = 'Unknown';
+        try {
+            // Get proxy for this attempt (rotates if multiple proxies available)
+            let proxyServer = null;
+            if (attempt < PROXY_SERVERS.length) {
+                // Rotate through proxies, starting from the assigned index for this URL
+                proxyServer = PROXY_SERVERS[(startProxyIndex + attempt) % PROXY_SERVERS.length];
+            } else {
+                // Last attempt: no proxy
+                proxyServer = null;
+                console.log(`Attempting ${targetUrl} without proxy (fallback)`);
+            }
+            
+            const userAgent = getRandomUserAgent();
+            const viewport = getRandomViewport();
+            
+            // Create context options with anti-detection measures
+            const contextOptions = {
+                viewport: viewport,
+                userAgent: userAgent,
+                locale: 'en-US',
+                timezoneId: 'America/New_York',
+                permissions: [],
+                extraHTTPHeaders: {
+                    'Accept-Language': 'en-US,en;q=0.9',
+                    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8',
+                    'Accept-Encoding': 'gzip, deflate, br',
+                    'Connection': 'keep-alive',
+                    'Upgrade-Insecure-Requests': '1',
+                    'Sec-Fetch-Dest': 'document',
+                    'Sec-Fetch-Mode': 'navigate',
+                    'Sec-Fetch-Site': 'none',
+                    'Cache-Control': 'max-age=0'
+                }
+            };
+
+            // Add proxy if available
+            if (proxyServer && PROXY_USERNAME && PROXY_PASSWORD) {
+                contextOptions.proxy = {
+                    server: `http://${proxyServer}`,
+                    username: PROXY_USERNAME,
+                    password: PROXY_PASSWORD
+                };
+                console.log(`Attempt ${attempt + 1}: Using proxy ${proxyServer} for ${targetUrl}`);
+            }
+
+            // Close previous context if retrying
+            if (context) {
+                await context.close();
+                context = null;
+            }
+
+            context = await browser.newContext(contextOptions);
+            page = await context.newPage();
+
+            // Inject comprehensive anti-detection scripts before navigation
+            await page.addInitScript(() => {
+                // Hide webdriver property
+                Object.defineProperty(navigator, 'webdriver', {
+                    get: () => false,
+                });
+
+                // Override automation property
+                delete navigator.__proto__.webdriver;
+
+                // Override plugins with realistic data
+                Object.defineProperty(navigator, 'plugins', {
+                    get: () => {
+                        return [
+                            { name: 'Chrome PDF Plugin', filename: 'internal-pdf-viewer', description: 'Portable Document Format' },
+                            { name: 'Chrome PDF Viewer', filename: 'mhjfbmdgcfjbbpaeojofohoefgiehjai', description: '' },
+                            { name: 'Native Client', filename: 'internal-nacl-plugin', description: '' }
+                        ];
+                    },
+                });
+
+                // Override languages
+                Object.defineProperty(navigator, 'languages', {
+                    get: () => ['en-US', 'en'],
+                });
+
+                // Override platform
+                Object.defineProperty(navigator, 'platform', {
+                    get: () => 'Win32',
+                });
+
+                // Override hardwareConcurrency
+                Object.defineProperty(navigator, 'hardwareConcurrency', {
+                    get: () => 8,
+                });
+
+                // Override deviceMemory
+                Object.defineProperty(navigator, 'deviceMemory', {
+                    get: () => 8,
+                });
+
+                // Override permissions
+                const originalQuery = window.navigator.permissions.query;
+                window.navigator.permissions.query = (parameters) => (
+                    parameters.name === 'notifications' ?
+                        Promise.resolve({ state: Notification.permission }) :
+                        originalQuery(parameters)
+                );
+
+                // Mock chrome object with more properties
+                window.chrome = {
+                    runtime: {},
+                    loadTimes: function() {},
+                    csi: function() {},
+                    app: {}
+                };
+
+                // Override getParameter to return realistic GPU info
+                const getParameter = WebGLRenderingContext.prototype.getParameter;
+                WebGLRenderingContext.prototype.getParameter = function(parameter) {
+                    if (parameter === 37445) {
+                        return 'Intel Inc.';
+                    }
+                    if (parameter === 37446) {
+                        return 'Intel Iris OpenGL Engine';
+                    }
+                    return getParameter.call(this, parameter);
+                };
+
+                // Override battery API
+                Object.defineProperty(navigator, 'getBattery', {
+                    get: () => undefined
+                });
+
+                // Mask automation in console
+                window.console.debug = () => {};
+
+                // Override toString methods to hide proxy
+                const originalToString = Function.prototype.toString;
+                Function.prototype.toString = function() {
+                    if (this === navigator.webdriver) {
+                        return 'function webdriver() { [native code] }';
+                    }
+                    return originalToString.call(this);
+                };
+
+                // Randomize canvas fingerprint slightly
+                const originalGetContext = HTMLCanvasElement.prototype.getContext;
+                HTMLCanvasElement.prototype.getContext = function(type, ...args) {
+                    const context = originalGetContext.call(this, type, ...args);
+                    if (type === '2d' || type === 'webgl' || type === 'webgl2') {
+                        // Add slight noise to canvas operations
+                        if (context && context.fillText) {
+                            const originalFillText = context.fillText;
+                            context.fillText = function(...args) {
+                                return originalFillText.apply(this, args);
+                            };
+                        }
+                    }
+                    return context;
+                };
+            });
+
+            console.log(`Navigating to: ${targetUrl}`);
+            
+            // Navigate directly to target URL (no homepage visit - it triggers detection)
+            // Use Google as referrer to simulate coming from search
+            await page.goto(targetUrl, { 
+                waitUntil: 'domcontentloaded', 
+                timeout: 60000,
+                referer: 'https://www.google.com/'
+            });
+            
+            // Detect and log the IP address being used
+            try {
+                // Try to get IP from a simple service
+                const ipResponse = await page.evaluate(async () => {
+                    try {
+                        const response = await fetch('https://api.ipify.org?format=json', { 
+                            method: 'GET',
+                            headers: { 'Accept': 'application/json' }
+                        });
+                        const data = await response.json();
+                        return data.ip;
+                    } catch (e) {
+                        return null;
+                    }
+                });
+                detectedIP = ipResponse || 'Failed to detect';
+                console.log(`🌐 IP Address being used: ${detectedIP} | Proxy: ${proxyServer || 'No proxy'}`);
+            } catch (ipErr) {
+                console.log(`⚠️ Could not detect IP: ${ipErr.message}`);
+            }
+            
+            // Accept cookies if popup appears (common on e-commerce sites)
+            try {
+                const cookieSelectors = [
+                    'button:has-text("Accept")',
+                    'button:has-text("Accept All")',
+                    'button:has-text("I Accept")',
+                    '[id*="accept"]',
+                    '[class*="accept"]',
+                    '[data-testid*="accept"]'
+                ];
+                for (const selector of cookieSelectors) {
+                    try {
+                        const cookieBtn = await page.locator(selector).first();
+                        if (await cookieBtn.isVisible({ timeout: 2000 })) {
+                            await cookieBtn.click();
+                            console.log(`Clicked cookie accept button`);
+                            await page.waitForTimeout(randomDelay(500, 1000));
+                            break;
+                        }
+                    } catch (e) {}
+                }
+            } catch (cookieErr) {
+                // No cookie popup, continue
+            }
+            
+            // Random delay before interaction (mimic human reading)
+            await page.waitForTimeout(randomDelay(3000, 5000));
+
+            // Simulate human-like mouse movement
+            await page.mouse.move(randomDelay(100, 500), randomDelay(100, 500));
+            await page.waitForTimeout(randomDelay(800, 1500));
+            
+            // Move mouse again (more realistic)
+            await page.mouse.move(randomDelay(200, 700), randomDelay(200, 700));
+            await page.waitForTimeout(randomDelay(500, 1000));
+            
+            // Hover over some elements (very human-like)
+            try {
+                const links = await page.locator('a').first();
+                if (await links.isVisible({ timeout: 2000 })) {
+                    await links.hover();
+                    await page.waitForTimeout(randomDelay(300, 600));
+                }
+            } catch (e) {}
+
+            // Simulate scrolling (human behavior) - slower and more deliberate
+            const scrollSteps = randomDelay(3, 6);
+            for (let i = 0; i < scrollSteps; i++) {
+                await page.evaluate(() => {
+                    window.scrollBy(0, Math.random() * 400 + 200);
+                });
+                await page.waitForTimeout(randomDelay(800, 1500));
+            }
+
+            // Scroll back up a bit (common human behavior)
+            await page.evaluate(() => {
+                window.scrollBy(0, -(Math.random() * 300 + 100));
+            });
+            await page.waitForTimeout(randomDelay(1000, 2000));
+
+            // Wait for dynamic content to load
+            await page.waitForTimeout(randomDelay(2000, 3000));
+
+            // Extra wait time to ensure page is fully loaded before scraping
+            await page.waitForTimeout(randomDelay(6000, 10000));
+
+            // Capture HTML
+            const html = await page.content();
+
+            // Capture Screenshot
+            const screenshotBuffer = await page.screenshot({ 
+                fullPage: true, 
+                type: 'jpeg', 
+                quality: 80 
+            });
+            const screenshotBase64 = screenshotBuffer.toString('base64');
+
+            const result = {
+                url: targetUrl,
+                status: 'success',
+                ipAddress: detectedIP,
+                proxy: proxyServer || 'No proxy',
+                html: html,
+                screenshot: `data:image/jpeg;base64,${screenshotBase64}`
+            };
+
+            success = true; // Mark as successful
+            console.log(`✓ Successfully processed ${targetUrl} | IP: ${detectedIP}`);
+
+            // Clean up
+            if (page) {
+                try { await page.close(); } catch (e) {}
+            }
+            if (context) {
+                try { await context.close(); } catch (e) {}
+            }
+
+            return result;
+
+        } catch (err) {
+            lastError = err;
+            console.error(`Attempt ${attempt + 1} failed for ${targetUrl}:`, err.message);
+            
+            // Close failed context/page before retry
+            if (page) {
+                try { await page.close(); } catch (e) {}
+                page = null;
+            }
+            if (context) {
+                try { await context.close(); } catch (e) {}
+                context = null;
+            }
+            
+            // If this was a proxy error and we have more proxies to try, continue
+            const isProxyError = err.message.includes('TUNNEL_CONNECTION_FAILED') || 
+                               err.message.includes('PROXY_CONNECTION_FAILED') ||
+                               err.message.includes('ERR_PROXY');
+            
+            if (isProxyError && attempt < maxRetries - 1) {
+                console.log(`Proxy failed, retrying with next proxy...`);
+                await new Promise(resolve => setTimeout(resolve, 1000)); // Brief delay before retry
+                continue; // Try next proxy
+            }
+        }
+    }
+    
+    // If all attempts failed, report error
+    if (!success) {
+        console.error(`All attempts failed for ${targetUrl}`);
+        
+        // Provide more detailed error information
+        let errorType = 'unknown';
+        if (lastError && lastError.message) {
+            if (lastError.message.includes('Timeout')) {
+                errorType = 'timeout';
+            } else if (lastError.message.includes('net::') || lastError.message.includes('TUNNEL') || lastError.message.includes('PROXY')) {
+                errorType = 'network';
+            } else if (lastError.message.includes('blocked') || lastError.message.includes('403') || lastError.message.includes('captcha')) {
+                errorType = 'blocked';
+            }
+        }
+        
+        return {
+            url: targetUrl,
+            status: 'error',
+            errorType: errorType,
+            error: lastError ? lastError.message : 'Unknown error'
+        };
+    }
+}
+
 app.post('/render', async (req, res) => {
     const { url, urls } = req.body;
     const targetUrls = urls || (url ? [url] : []);
@@ -66,7 +427,6 @@ app.post('/render', async (req, res) => {
         return res.status(400).json({ error: 'No URL provided. Please provide "url" (string) or "urls" (array) in the request body.' });
     }
 
-    const results = [];
     let browser = null;
 
     try {
@@ -118,377 +478,28 @@ app.post('/render', async (req, res) => {
 
         browser = await chromium.launch(launchOptions);
 
-        // Track domains to add delays between same-domain requests
-        const domainLastRequest = new Map();
+        // Process all URLs in parallel
+        console.log(`🚀 Processing ${targetUrls.length} URL(s) in parallel...`);
+        const results = await Promise.allSettled(
+            targetUrls.map(targetUrl => processUrl(browser, targetUrl))
+        );
 
-        // Process each URL with a fresh context to avoid fingerprinting
-        for (const targetUrl of targetUrls) {
-            const urlObj = new URL(targetUrl);
-            const domain = urlObj.hostname;
-            
-            // Add delay if we've hit this domain recently (avoid rate limiting)
-            if (domainLastRequest.has(domain)) {
-                const timeSinceLastRequest = Date.now() - domainLastRequest.get(domain);
-                const minDelay = 15000; // 15 seconds minimum between same domain
-                if (timeSinceLastRequest < minDelay) {
-                    const waitTime = minDelay - timeSinceLastRequest;
-                    console.log(`⏳ Waiting ${Math.round(waitTime/1000)}s before next request to ${domain} (rate limit protection)`);
-                    await new Promise(resolve => setTimeout(resolve, waitTime));
-                }
-            }
-            domainLastRequest.set(domain, Date.now());
-            let context = null;
-            let page = null;
-            let success = false;
-            let lastError = null;
-            
-            // Try with proxy first, then fallback to no proxy if all proxies fail
-            const maxRetries = PROXY_SERVERS.length > 0 ? PROXY_SERVERS.length + 1 : 1; // +1 for no-proxy fallback
-            
-                for (let attempt = 0; attempt < maxRetries && !success; attempt++) {
-                let detectedIP = 'Unknown';
-                try {
-                    // Get proxy for this attempt (rotates if multiple proxies available)
-                    let proxyServer = null;
-                    if (attempt < PROXY_SERVERS.length) {
-                        // Rotate through proxies, starting from a different one for each URL
-                        const startIndex = proxyIndex % PROXY_SERVERS.length;
-                        proxyServer = PROXY_SERVERS[(startIndex + attempt) % PROXY_SERVERS.length];
-                    } else {
-                        // Last attempt: no proxy
-                        proxyServer = null;
-                        console.log(`Attempting ${targetUrl} without proxy (fallback)`);
-                    }
-                    
-                    const userAgent = getRandomUserAgent();
-                    const viewport = getRandomViewport();
-                    
-                    // Create context options with anti-detection measures
-                    const contextOptions = {
-                        viewport: viewport,
-                        userAgent: userAgent,
-                        locale: 'en-US',
-                        timezoneId: 'America/New_York',
-                        permissions: [],
-                        extraHTTPHeaders: {
-                            'Accept-Language': 'en-US,en;q=0.9',
-                            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8',
-                            'Accept-Encoding': 'gzip, deflate, br',
-                            'Connection': 'keep-alive',
-                            'Upgrade-Insecure-Requests': '1',
-                            'Sec-Fetch-Dest': 'document',
-                            'Sec-Fetch-Mode': 'navigate',
-                            'Sec-Fetch-Site': 'none',
-                            'Cache-Control': 'max-age=0'
-                        }
-                    };
-
-                    // Add proxy if available
-                    if (proxyServer && PROXY_USERNAME && PROXY_PASSWORD) {
-                        contextOptions.proxy = {
-                            server: `http://${proxyServer}`,
-                            username: PROXY_USERNAME,
-                            password: PROXY_PASSWORD
-                        };
-                        console.log(`Attempt ${attempt + 1}: Using proxy ${proxyServer} for ${targetUrl}`);
-                    }
-
-                    // Close previous context if retrying
-                    if (context) {
-                        await context.close();
-                        context = null;
-                    }
-
-                    context = await browser.newContext(contextOptions);
-                    page = await context.newPage();
-
-                    // Inject comprehensive anti-detection scripts before navigation
-                    await page.addInitScript(() => {
-                        // Hide webdriver property
-                        Object.defineProperty(navigator, 'webdriver', {
-                            get: () => false,
-                        });
-
-                        // Override automation property
-                        delete navigator.__proto__.webdriver;
-
-                        // Override plugins with realistic data
-                        Object.defineProperty(navigator, 'plugins', {
-                            get: () => {
-                                return [
-                                    { name: 'Chrome PDF Plugin', filename: 'internal-pdf-viewer', description: 'Portable Document Format' },
-                                    { name: 'Chrome PDF Viewer', filename: 'mhjfbmdgcfjbbpaeojofohoefgiehjai', description: '' },
-                                    { name: 'Native Client', filename: 'internal-nacl-plugin', description: '' }
-                                ];
-                            },
-                        });
-
-                        // Override languages
-                        Object.defineProperty(navigator, 'languages', {
-                            get: () => ['en-US', 'en'],
-                        });
-
-                        // Override platform
-                        Object.defineProperty(navigator, 'platform', {
-                            get: () => 'Win32',
-                        });
-
-                        // Override hardwareConcurrency
-                        Object.defineProperty(navigator, 'hardwareConcurrency', {
-                            get: () => 8,
-                        });
-
-                        // Override deviceMemory
-                        Object.defineProperty(navigator, 'deviceMemory', {
-                            get: () => 8,
-                        });
-
-                        // Override permissions
-                        const originalQuery = window.navigator.permissions.query;
-                        window.navigator.permissions.query = (parameters) => (
-                            parameters.name === 'notifications' ?
-                                Promise.resolve({ state: Notification.permission }) :
-                                originalQuery(parameters)
-                        );
-
-                        // Mock chrome object with more properties
-                        window.chrome = {
-                            runtime: {},
-                            loadTimes: function() {},
-                            csi: function() {},
-                            app: {}
-                        };
-
-                        // Override getParameter to return realistic GPU info
-                        const getParameter = WebGLRenderingContext.prototype.getParameter;
-                        WebGLRenderingContext.prototype.getParameter = function(parameter) {
-                            if (parameter === 37445) {
-                                return 'Intel Inc.';
-                            }
-                            if (parameter === 37446) {
-                                return 'Intel Iris OpenGL Engine';
-                            }
-                            return getParameter.call(this, parameter);
-                        };
-
-                        // Override battery API
-                        Object.defineProperty(navigator, 'getBattery', {
-                            get: () => undefined
-                        });
-
-                        // Mask automation in console
-                        window.console.debug = () => {};
-
-                        // Override toString methods to hide proxy
-                        const originalToString = Function.prototype.toString;
-                        Function.prototype.toString = function() {
-                            if (this === navigator.webdriver) {
-                                return 'function webdriver() { [native code] }';
-                            }
-                            return originalToString.call(this);
-                        };
-
-                        // Randomize canvas fingerprint slightly
-                        const originalGetContext = HTMLCanvasElement.prototype.getContext;
-                        HTMLCanvasElement.prototype.getContext = function(type, ...args) {
-                            const context = originalGetContext.call(this, type, ...args);
-                            if (type === '2d' || type === 'webgl' || type === 'webgl2') {
-                                // Add slight noise to canvas operations
-                                if (context && context.fillText) {
-                                    const originalFillText = context.fillText;
-                                    context.fillText = function(...args) {
-                                        return originalFillText.apply(this, args);
-                                    };
-                                }
-                            }
-                            return context;
-                        };
-                    });
-
-                    console.log(`Navigating to: ${targetUrl}`);
-                    
-                    // Navigate directly to target URL (no homepage visit - it triggers detection)
-                    // Use Google as referrer to simulate coming from search
-                    await page.goto(targetUrl, { 
-                        waitUntil: 'domcontentloaded', 
-                        timeout: 60000,
-                        referer: 'https://www.google.com/'
-                    });
-                    
-                    // Detect and log the IP address being used
-                    try {
-                        // Try to get IP from a simple service
-                        const ipResponse = await page.evaluate(async () => {
-                            try {
-                                const response = await fetch('https://api.ipify.org?format=json', { 
-                                    method: 'GET',
-                                    headers: { 'Accept': 'application/json' }
-                                });
-                                const data = await response.json();
-                                return data.ip;
-                            } catch (e) {
-                                return null;
-                            }
-                        });
-                        detectedIP = ipResponse || 'Failed to detect';
-                        console.log(`🌐 IP Address being used: ${detectedIP} | Proxy: ${proxyServer || 'No proxy'}`);
-                    } catch (ipErr) {
-                        console.log(`⚠️ Could not detect IP: ${ipErr.message}`);
-                    }
-                    
-                    // Accept cookies if popup appears (common on e-commerce sites)
-                    try {
-                        const cookieSelectors = [
-                            'button:has-text("Accept")',
-                            'button:has-text("Accept All")',
-                            'button:has-text("I Accept")',
-                            '[id*="accept"]',
-                            '[class*="accept"]',
-                            '[data-testid*="accept"]'
-                        ];
-                        for (const selector of cookieSelectors) {
-                            try {
-                                const cookieBtn = await page.locator(selector).first();
-                                if (await cookieBtn.isVisible({ timeout: 2000 })) {
-                                    await cookieBtn.click();
-                                    console.log(`Clicked cookie accept button`);
-                                    await page.waitForTimeout(randomDelay(500, 1000));
-                                    break;
-                                }
-                            } catch (e) {}
-                        }
-                    } catch (cookieErr) {
-                        // No cookie popup, continue
-                    }
-                    
-                    // Random delay before interaction (mimic human reading)
-                    await page.waitForTimeout(randomDelay(3000, 5000));
-
-                    // Simulate human-like mouse movement
-                    await page.mouse.move(randomDelay(100, 500), randomDelay(100, 500));
-                    await page.waitForTimeout(randomDelay(800, 1500));
-                    
-                    // Move mouse again (more realistic)
-                    await page.mouse.move(randomDelay(200, 700), randomDelay(200, 700));
-                    await page.waitForTimeout(randomDelay(500, 1000));
-                    
-                    // Hover over some elements (very human-like)
-                    try {
-                        const links = await page.locator('a').first();
-                        if (await links.isVisible({ timeout: 2000 })) {
-                            await links.hover();
-                            await page.waitForTimeout(randomDelay(300, 600));
-                        }
-                    } catch (e) {}
-
-                    // Simulate scrolling (human behavior) - slower and more deliberate
-                    const scrollSteps = randomDelay(3, 6);
-                    for (let i = 0; i < scrollSteps; i++) {
-                        await page.evaluate(() => {
-                            window.scrollBy(0, Math.random() * 400 + 200);
-                        });
-                        await page.waitForTimeout(randomDelay(800, 1500));
-                    }
-
-                    // Scroll back up a bit (common human behavior)
-                    await page.evaluate(() => {
-                        window.scrollBy(0, -(Math.random() * 300 + 100));
-                    });
-                    await page.waitForTimeout(randomDelay(1000, 2000));
-
-                    // Wait for dynamic content to load
-                    await page.waitForTimeout(randomDelay(2000, 3000));
-
-                    // Extra wait time to ensure page is fully loaded before scraping
-                    await page.waitForTimeout(randomDelay(6000, 10000));
-
-                    // Capture HTML
-                    const html = await page.content();
-
-                    // Capture Screenshot
-                    const screenshotBuffer = await page.screenshot({ 
-                        fullPage: true, 
-                        type: 'jpeg', 
-                        quality: 80 
-                    });
-                    const screenshotBase64 = screenshotBuffer.toString('base64');
-
-                    results.push({
-                        url: targetUrl,
-                        status: 'success',
-                        ipAddress: detectedIP,
-                        proxy: proxyServer || 'No proxy',
-                        html: html,
-                        screenshot: `data:image/jpeg;base64,${screenshotBase64}`
-                    });
-
-                    success = true; // Mark as successful
-                    console.log(`✓ Successfully processed ${targetUrl} | IP: ${detectedIP}`);
-
-                } catch (err) {
-                    lastError = err;
-                    console.error(`Attempt ${attempt + 1} failed for ${targetUrl}:`, err.message);
-                    
-                    // Close failed context/page before retry
-                    if (page) {
-                        try { await page.close(); } catch (e) {}
-                        page = null;
-                    }
-                    if (context) {
-                        try { await context.close(); } catch (e) {}
-                        context = null;
-                    }
-                    
-                    // If this was a proxy error and we have more proxies to try, continue
-                    const isProxyError = err.message.includes('TUNNEL_CONNECTION_FAILED') || 
-                                       err.message.includes('PROXY_CONNECTION_FAILED') ||
-                                       err.message.includes('ERR_PROXY');
-                    
-                    if (isProxyError && attempt < maxRetries - 1) {
-                        console.log(`Proxy failed, retrying with next proxy...`);
-                        await new Promise(resolve => setTimeout(resolve, 1000)); // Brief delay before retry
-                        continue; // Try next proxy
-                    }
-                }
-            }
-            
-            // If all attempts failed, report error
-            if (!success) {
-                console.error(`All attempts failed for ${targetUrl}`);
-                
-                // Provide more detailed error information
-                let errorType = 'unknown';
-                if (lastError.message.includes('Timeout')) {
-                    errorType = 'timeout';
-                } else if (lastError.message.includes('net::') || lastError.message.includes('TUNNEL') || lastError.message.includes('PROXY')) {
-                    errorType = 'network';
-                } else if (lastError.message.includes('blocked') || lastError.message.includes('403') || lastError.message.includes('captcha')) {
-                    errorType = 'blocked';
-                }
-                
-                results.push({
-                    url: targetUrl,
+        // Map results to the expected format
+        const formattedResults = results.map((result, index) => {
+            if (result.status === 'fulfilled') {
+                return result.value;
+            } else {
+                // Handle unexpected errors in processUrl
+                return {
+                    url: targetUrls[index],
                     status: 'error',
-                    errorType: errorType,
-                    error: lastError.message
-                });
+                    errorType: 'unknown',
+                    error: result.reason ? result.reason.message : 'Unexpected error'
+                };
             }
-            
-            // Increment proxy index for next URL (ensures rotation across URLs)
-            if (PROXY_SERVERS.length > 0) {
-                proxyIndex++;
-            }
-            
-            // Clean up
-            if (page) {
-                try { await page.close(); } catch (e) {}
-            }
-            if (context) {
-                try { await context.close(); } catch (e) {}
-            }
-        }
+        });
 
-        res.json({ results });
+        res.json({ results: formattedResults });
 
     } catch (err) {
         console.error('Browser launch error:', err);

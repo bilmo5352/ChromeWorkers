@@ -6,10 +6,7 @@ const API_URL = 'https://chromeworkers-production.up.railway.app/render';
 // const API_URL = 'http://localhost:3000/render'; // For local testing
 
 const TEST_URLS = [
-    'https://www.walmart.com/search?q=mobiles',
-    'https://www.meesho.com/search?q=soap',
-    
-    // Add more URLs to test
+    "https://www.nykaa.com/brands/nykaa-cosmetics/c/1937?search_redirection=True"
 ];
 
 /**

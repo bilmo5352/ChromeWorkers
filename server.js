@@ -98,7 +98,8 @@ app.post('/render', async (req, res) => {
             // Try with proxy first, then fallback to no proxy if all proxies fail
             const maxRetries = PROXY_SERVERS.length > 0 ? PROXY_SERVERS.length + 1 : 1; // +1 for no-proxy fallback
             
-            for (let attempt = 0; attempt < maxRetries && !success; attempt++) {
+                for (let attempt = 0; attempt < maxRetries && !success; attempt++) {
+                let detectedIP = 'Unknown';
                 try {
                     // Get proxy for this attempt (rotates if multiple proxies available)
                     let proxyServer = null;
@@ -291,6 +292,27 @@ app.post('/render', async (req, res) => {
                         referer: homepage
                     });
                     
+                    // Detect and log the IP address being used
+                    try {
+                        // Try to get IP from a simple service
+                        const ipResponse = await page.evaluate(async () => {
+                            try {
+                                const response = await fetch('https://api.ipify.org?format=json', { 
+                                    method: 'GET',
+                                    headers: { 'Accept': 'application/json' }
+                                });
+                                const data = await response.json();
+                                return data.ip;
+                            } catch (e) {
+                                return null;
+                            }
+                        });
+                        detectedIP = ipResponse || 'Failed to detect';
+                        console.log(`🌐 IP Address being used: ${detectedIP} | Proxy: ${proxyServer || 'No proxy'}`);
+                    } catch (ipErr) {
+                        console.log(`⚠️ Could not detect IP: ${ipErr.message}`);
+                    }
+                    
                     // Random delay before interaction (mimic human reading)
                     await page.waitForTimeout(randomDelay(2000, 4000));
 
@@ -337,12 +359,14 @@ app.post('/render', async (req, res) => {
                     results.push({
                         url: targetUrl,
                         status: 'success',
+                        ipAddress: detectedIP,
+                        proxy: proxyServer || 'No proxy',
                         html: html,
                         screenshot: `data:image/jpeg;base64,${screenshotBase64}`
                     });
 
                     success = true; // Mark as successful
-                    console.log(`✓ Successfully processed ${targetUrl}`);
+                    console.log(`✓ Successfully processed ${targetUrl} | IP: ${detectedIP}`);
 
                 } catch (err) {
                     lastError = err;

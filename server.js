@@ -70,7 +70,7 @@ app.post('/render', async (req, res) => {
     let browser = null;
 
     try {
-        // Launch browser in headed mode with anti-detection args
+        // Launch browser in headed mode with aggressive anti-detection args
         const launchOptions = {
             headless: false,
             args: [
@@ -82,14 +82,61 @@ app.post('/render', async (req, res) => {
                 '--disable-web-security',
                 '--disable-features=VizDisplayCompositor',
                 '--disable-ipc-flooding-protection',
-                '--window-size=1920,1080'
+                '--window-size=1920,1080',
+                '--disable-infobars',
+                '--disable-notifications',
+                '--disable-popup-blocking',
+                '--disable-translate',
+                '--disable-background-timer-throttling',
+                '--disable-backgrounding-occluded-windows',
+                '--disable-renderer-backgrounding',
+                '--disable-features=TranslateUI',
+                '--disable-component-extensions-with-background-pages',
+                '--disable-default-apps',
+                '--mute-audio',
+                '--no-first-run',
+                '--no-default-browser-check',
+                '--autoplay-policy=user-gesture-required',
+                '--disable-background-networking',
+                '--disable-breakpad',
+                '--disable-client-side-phishing-detection',
+                '--disable-component-update',
+                '--disable-domain-reliability',
+                '--disable-features=AudioServiceOutOfProcess',
+                '--disable-hang-monitor',
+                '--disable-prompt-on-repost',
+                '--disable-sync',
+                '--disable-background-timer-throttling',
+                '--metrics-recording-only',
+                '--no-pings',
+                '--password-store=basic',
+                '--use-mock-keychain',
+                '--force-color-profile=srgb',
+                '--disable-features=BlinkGenPropertyTrees'
             ]
         };
 
         browser = await chromium.launch(launchOptions);
 
+        // Track domains to add delays between same-domain requests
+        const domainLastRequest = new Map();
+
         // Process each URL with a fresh context to avoid fingerprinting
         for (const targetUrl of targetUrls) {
+            const urlObj = new URL(targetUrl);
+            const domain = urlObj.hostname;
+            
+            // Add delay if we've hit this domain recently (avoid rate limiting)
+            if (domainLastRequest.has(domain)) {
+                const timeSinceLastRequest = Date.now() - domainLastRequest.get(domain);
+                const minDelay = 15000; // 15 seconds minimum between same domain
+                if (timeSinceLastRequest < minDelay) {
+                    const waitTime = minDelay - timeSinceLastRequest;
+                    console.log(`⏳ Waiting ${Math.round(waitTime/1000)}s before next request to ${domain} (rate limit protection)`);
+                    await new Promise(resolve => setTimeout(resolve, waitTime));
+                }
+            }
+            domainLastRequest.set(domain, Date.now());
             let context = null;
             let page = null;
             let success = false;
@@ -258,38 +305,46 @@ app.post('/render', async (req, res) => {
                         };
                     });
 
-                    // Extract domain to visit homepage first
+                    // Extract domain
                     const urlObj = new URL(targetUrl);
                     const homepage = `${urlObj.protocol}//${urlObj.hostname}`;
+                    const isMeesho = urlObj.hostname.includes('meesho.com');
                     
-                    // Visit homepage first (more realistic behavior)
-                    console.log(`First visiting homepage: ${homepage}`);
-                    try {
-                        await page.goto(homepage, { 
-                            waitUntil: 'domcontentloaded', 
-                            timeout: 30000,
-                            referer: 'https://www.google.com/'
-                        });
-                        
-                        // Brief interaction on homepage
-                        await page.waitForTimeout(randomDelay(2000, 4000));
-                        
-                        // Scroll a bit on homepage
-                        await page.evaluate(() => {
-                            window.scrollBy(0, Math.random() * 200 + 100);
-                        });
-                        await page.waitForTimeout(randomDelay(1000, 2000));
-                    } catch (homeErr) {
-                        console.log(`Homepage visit failed (continuing anyway): ${homeErr.message}`);
+                    // For Meesho, skip homepage visit (it triggers detection)
+                    // For other sites, visit homepage first
+                    if (!isMeesho) {
+                        console.log(`First visiting homepage: ${homepage}`);
+                        try {
+                            await page.goto(homepage, { 
+                                waitUntil: 'domcontentloaded', 
+                                timeout: 30000,
+                                referer: 'https://www.google.com/'
+                            });
+                            
+                            // Brief interaction on homepage
+                            await page.waitForTimeout(randomDelay(2000, 4000));
+                            
+                            // Scroll a bit on homepage
+                            await page.evaluate(() => {
+                                window.scrollBy(0, Math.random() * 200 + 100);
+                            });
+                            await page.waitForTimeout(randomDelay(1000, 2000));
+                        } catch (homeErr) {
+                            console.log(`Homepage visit failed (continuing anyway): ${homeErr.message}`);
+                        }
                     }
                     
                     console.log(`Now navigating to: ${targetUrl}`);
                     
-                    // Navigate to actual target URL
+                    // For Meesho, use Google as referrer directly
+                    // For others, use homepage as referrer
+                    const refererUrl = isMeesho ? 'https://www.google.com/' : homepage;
+                    
+                    // Navigate to actual target URL with more realistic options
                     await page.goto(targetUrl, { 
                         waitUntil: 'domcontentloaded', 
                         timeout: 60000,
-                        referer: homepage
+                        referer: refererUrl
                     });
                     
                     // Detect and log the IP address being used
@@ -313,16 +368,50 @@ app.post('/render', async (req, res) => {
                         console.log(`⚠️ Could not detect IP: ${ipErr.message}`);
                     }
                     
+                    // Accept cookies if popup appears (common on e-commerce sites)
+                    try {
+                        const cookieSelectors = [
+                            'button:has-text("Accept")',
+                            'button:has-text("Accept All")',
+                            'button:has-text("I Accept")',
+                            '[id*="accept"]',
+                            '[class*="accept"]',
+                            '[data-testid*="accept"]'
+                        ];
+                        for (const selector of cookieSelectors) {
+                            try {
+                                const cookieBtn = await page.locator(selector).first();
+                                if (await cookieBtn.isVisible({ timeout: 2000 })) {
+                                    await cookieBtn.click();
+                                    console.log(`Clicked cookie accept button`);
+                                    await page.waitForTimeout(randomDelay(500, 1000));
+                                    break;
+                                }
+                            } catch (e) {}
+                        }
+                    } catch (cookieErr) {
+                        // No cookie popup, continue
+                    }
+                    
                     // Random delay before interaction (mimic human reading)
-                    await page.waitForTimeout(randomDelay(2000, 4000));
+                    await page.waitForTimeout(randomDelay(3000, 5000));
 
                     // Simulate human-like mouse movement
                     await page.mouse.move(randomDelay(100, 500), randomDelay(100, 500));
-                    await page.waitForTimeout(randomDelay(500, 1000));
+                    await page.waitForTimeout(randomDelay(800, 1500));
                     
                     // Move mouse again (more realistic)
                     await page.mouse.move(randomDelay(200, 700), randomDelay(200, 700));
-                    await page.waitForTimeout(randomDelay(300, 700));
+                    await page.waitForTimeout(randomDelay(500, 1000));
+                    
+                    // Hover over some elements (very human-like)
+                    try {
+                        const links = await page.locator('a').first();
+                        if (await links.isVisible({ timeout: 2000 })) {
+                            await links.hover();
+                            await page.waitForTimeout(randomDelay(300, 600));
+                        }
+                    } catch (e) {}
 
                     // Simulate scrolling (human behavior) - slower and more deliberate
                     const scrollSteps = randomDelay(3, 6);

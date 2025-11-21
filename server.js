@@ -305,46 +305,14 @@ app.post('/render', async (req, res) => {
                         };
                     });
 
-                    // Extract domain
-                    const urlObj = new URL(targetUrl);
-                    const homepage = `${urlObj.protocol}//${urlObj.hostname}`;
-                    const isMeesho = urlObj.hostname.includes('meesho.com');
+                    console.log(`Navigating to: ${targetUrl}`);
                     
-                    // For Meesho, skip homepage visit (it triggers detection)
-                    // For other sites, visit homepage first
-                    if (!isMeesho) {
-                        console.log(`First visiting homepage: ${homepage}`);
-                        try {
-                            await page.goto(homepage, { 
-                                waitUntil: 'domcontentloaded', 
-                                timeout: 30000,
-                                referer: 'https://www.google.com/'
-                            });
-                            
-                            // Brief interaction on homepage
-                            await page.waitForTimeout(randomDelay(2000, 4000));
-                            
-                            // Scroll a bit on homepage
-                            await page.evaluate(() => {
-                                window.scrollBy(0, Math.random() * 200 + 100);
-                            });
-                            await page.waitForTimeout(randomDelay(1000, 2000));
-                        } catch (homeErr) {
-                            console.log(`Homepage visit failed (continuing anyway): ${homeErr.message}`);
-                        }
-                    }
-                    
-                    console.log(`Now navigating to: ${targetUrl}`);
-                    
-                    // For Meesho, use Google as referrer directly
-                    // For others, use homepage as referrer
-                    const refererUrl = isMeesho ? 'https://www.google.com/' : homepage;
-                    
-                    // Navigate to actual target URL with more realistic options
+                    // Navigate directly to target URL (no homepage visit - it triggers detection)
+                    // Use Google as referrer to simulate coming from search
                     await page.goto(targetUrl, { 
                         waitUntil: 'domcontentloaded', 
                         timeout: 60000,
-                        referer: refererUrl
+                        referer: 'https://www.google.com/'
                     });
                     
                     // Detect and log the IP address being used
